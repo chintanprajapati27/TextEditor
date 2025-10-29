@@ -1,0 +1,364 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Text Editor v3.0</title>
+    <!-- Load Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        /* Define a subtle, glowing shadow for cards and buttons to enhance the dark theme sleekness */
+        .neon-shadow {
+            box-shadow: 0 0 10px rgba(0, 255, 255, 0.2), 0 0 20px rgba(0, 255, 255, 0.1);
+        }
+        .neon-border {
+             border-color: #06B6D4; /* Tailwind cyan-500 */
+        }
+        
+        /* --- Styles for the Copyable Output Area --- */
+        #outputContainer {
+            min-height: 200px;
+            /* DARK THEME BACKGROUND & TEXT COLOR */
+            background-color: #1E2734; 
+            color: #E2E8F0; /* Light text for dark background */
+            
+            border: 1px solid #4B5563; 
+            padding: 1.5rem;
+            border-radius: 0.75rem;
+            box-shadow: inset 0 1px 3px 0 rgba(0, 0, 0, 0.4);
+            overflow-x: auto; 
+            
+            /* CRUCIAL: Apply fixed-width font and white-space processing */
+            font-family: 'Consolas', 'Courier New', monospace; 
+            font-size: 11pt; 
+            line-height: 1.0; 
+            width: 100%; 
+            box-sizing: border-box;
+            white-space: pre; 
+        }
+        
+        /* Dark Theme adjustment for standard line separator */
+        .output-separator-line {
+            width: 100%;
+            border-top: 1px dashed #A0AEC0; 
+            margin: 0.5rem 0;
+        }
+        
+        /* Special styles for Subtotal and Total */
+        .output-subtotal, .output-total {
+            font-weight: 700;
+        }
+
+        .output-total {
+            border-top: 2px solid #E2E8F0; 
+            padding-top: 0.4rem;
+            margin-top: 0.4rem;
+        }
+        
+    </style>
+    <script>
+        /**
+         * Custom non-blocking message system (replaces alert()).
+         * Adjusted classes for Dark Theme.
+         */
+        function showMessage(message, type = 'error') {
+            const messageBox = document.getElementById('messageBox');
+            messageBox.textContent = message;
+            messageBox.classList.remove('hidden', 'bg-red-900', 'bg-green-900', 'text-red-300', 'text-green-300');
+
+            if (type === 'error') {
+                messageBox.classList.add('bg-red-900', 'text-red-300'); 
+            } else {
+                messageBox.classList.add('bg-green-900', 'text-green-300'); 
+            }
+
+            setTimeout(() => {
+                messageBox.classList.add('hidden');
+            }, 6000);
+        }
+
+        /**
+         * Central function to parse the raw data into a structured array.
+         */
+        function parseData(rawData) {
+            const rows = rawData.split('\n');
+            const parsedData = [];
+
+            for (const row of rows) {
+                let description = ''; 
+                let value = '';  
+                
+                if (row.includes('\t')) {
+                    const parts = row.split('\t', 2); 
+                    description = parts[0] ? parts[0].trim() : ''; 
+                    value = parts[1] ? parts[1].trim() : ''; 
+                } else if (row.includes(',')) {
+                    const parts = row.split(',', 2);
+                    description = parts[0] ? parts[0].trim() : '';
+                    value = parts[1] ? parts[1].trim() : '';
+                } else {
+                    const colonIndex = row.indexOf(':');
+                    if (colonIndex > -1) {
+                        description = row.substring(0, colonIndex).trim();
+                        value = row.substring(colonIndex + 1).trim();
+                    } else {
+                        description = row.trim();
+                    }
+                }
+
+                if (description || value) {
+                    parsedData.push({ description, value });
+                }
+            }
+            return parsedData;
+        }
+
+        /**
+         * Generates the plain text output using space padding.
+         * Logic remains unchanged (Left-aligned title, right-aligned data column).
+         */
+        function generatePlainTextOutput(data, title) {
+            let maxCol1Length = 0; 
+            
+            const dataRows = data.filter(item => 
+                !item.description.startsWith('-') && !item.description.startsWith('_') && !item.description.startsWith('=')
+            );
+
+            dataRows.forEach(item => {
+                maxCol1Length = Math.max(maxCol1Length, item.description.length);
+            });
+            
+            const MIN_GAP = 3; 
+            
+            let finalOutput = '';
+            let maxTotalLength = 0;
+            const lines = [];
+
+            dataRows.forEach(item => {
+                const desc = item.description; 
+                const value = item.value; 
+
+                const descPadding = ' '.repeat(maxCol1Length - desc.length);
+                const descBlock = descPadding + desc;
+                
+                const separatorBlock = ' : ' + ' '.repeat(MIN_GAP - 1); 
+
+                const line = descBlock + separatorBlock + value;
+                
+                lines.push({ text: line, length: line.length });
+                maxTotalLength = Math.max(maxTotalLength, line.length);
+            });
+            
+            if (title && title.length > maxTotalLength) {
+                 maxTotalLength = title.length;
+            }
+
+            if (title) {
+                finalOutput += `${title}\n`;
+                finalOutput += `${'-'.repeat(maxTotalLength)}\n`; 
+            }
+
+
+            let dataIndex = 0;
+            data.forEach(item => {
+                const desc = item.description;
+                
+                if (desc.startsWith('-') || desc.startsWith('_') || desc.startsWith('=')) {
+                    finalOutput += `${'-'.repeat(maxTotalLength)}\n`;
+                } else {
+                    if (lines[dataIndex]) {
+                        const lineText = lines[dataIndex].text;
+                        const finalLine = lineText + ' '.repeat(maxTotalLength - lineText.length);
+                        finalOutput += `${finalLine}\n`;
+                    }
+                    dataIndex++;
+                }
+            });
+            
+            return finalOutput.trimEnd();
+        }
+
+
+        /**
+         * Opens the generated content in a new, clean window.
+         */
+        function openInNewWindow() {
+            const rawData = document.getElementById('excelData').value; 
+            if (!rawData.trim()) { 
+                showMessage("Please paste your Excel data into the box and click 'Generate' first.", 'error');
+                return;
+            }
+            const title = document.getElementById('titleInput').value.trim();
+
+            const parsedData = parseData(rawData);
+            const content = generatePlainTextOutput(parsedData, title); 
+
+            const newWindow = window.open("", "_blank", "width=600,height=600,resizable=yes,scrollbars=yes");
+            
+            if (newWindow) {
+                newWindow.document.write(`
+                    <!DOCTYPE html>
+                    <html>
+                    <head>
+                        <title>Formatted Data Output</title>
+                        <style>
+                            /* DARK THEME FOR NEW WINDOW */
+                            body {
+                                margin: 0;
+                                padding: 0;
+                                background-color: #1E2734; 
+                                color: #E2E8F0; 
+                            }
+                            pre {
+                                font-family: 'Consolas', 'Courier New', monospace; 
+                                font-size: 11pt;
+                                line-height: 1.0;
+                                padding: 20px;
+                                margin: 0;
+                                white-space: pre; 
+                                word-wrap: break-word;
+                            }
+                        </style>
+                    </head>
+                    <body>
+                        <pre>${content}</pre>
+                    </body>
+                    </html>
+                `);
+                newWindow.document.close();
+                showMessage("The formatted output has been opened in a new window, optimized for copying.", 'success');
+            } else {
+                showMessage("Could not open a new window. Please check your browser's pop-up blocker settings.", 'error');
+            }
+        }
+
+        /**
+         * Parses the data and renders the formatted content to the output container.
+         */
+        function generateLabels() {
+            try {
+                const rawData = document.getElementById('excelData').value; 
+                if (!rawData.trim()) { 
+                    showMessage("Please paste your Excel data into the box first.", 'error');
+                    return;
+                }
+                const title = document.getElementById('titleInput').value.trim();
+
+                const parsedData = parseData(rawData);
+                const outputText = generatePlainTextOutput(parsedData, title);
+
+                showMessage(`Successfully generated ${parsedData.length} lines of data, including title.`, 'success');
+
+                const outputContainer = document.getElementById('outputContainer');
+                outputContainer.innerHTML = `<pre class="m-0 p-0">${outputText}</pre>`;
+                
+                document.getElementById('openInWindowButton').disabled = false;
+
+                // Scroll to the output container for visibility only on small screens
+                if (window.innerWidth < 1024) { 
+                    outputContainer.scrollIntoView({ behavior: 'smooth' });
+                }
+
+            } catch (error) {
+                console.error("Data generation failed:", error);
+                showMessage(`An unexpected error occurred during data generation: ${error.message}. Please check console for details.`, 'error');
+            }
+        }
+
+        // --- Robust Event Listener Attachment ---
+        document.addEventListener('DOMContentLoaded', () => {
+            document.getElementById('generateButton').addEventListener('click', generateLabels);
+            document.getElementById('openInWindowButton').addEventListener('click', openInNewWindow);
+        });
+    </script>
+</head>
+
+<!-- Applying Dynamic Dark Theme Classes -->
+<body class="bg-[#1E2734] min-h-screen p-4 sm:p-8 font-sans text-gray-100">
+
+    <!-- Application Container (Max-width 7XL for wide-screen feel) -->
+    <div class="app-container max-w-7xl mx-auto">
+        <header class="text-center mb-8">
+            <h1 class="text-4xl font-extrabold text-cyan-400 mb-2">
+                TEXT EDITOR
+            </h1>
+            <p class="text-gray-300 text-lg">Text Formatting Tool For Invoices</p>
+        </header>
+        
+        <!-- Message Box (Feedback) -->
+        <div id="messageBox" class="hidden p-3 mb-6 rounded-lg font-medium transition-all duration-300 shadow-md" role="alert">
+            <!-- Messages will appear here -->
+        </div>
+
+        <!-- Main Dynamic Layout: Two-Column Grid on large screens, stacked on small screens -->
+        <div class="grid lg:grid-cols-7 gap-6 lg:gap-8">
+
+            <!-- COLUMN 1: INPUT CONTROLS (3/7 width on desktop) -->
+            <div class="lg:col-span-3 space-y-6">
+
+                <!-- Title Input Card -->
+                <div class="bg-[#2A3445] p-6 rounded-xl shadow-xl neon-shadow border border-gray-700">
+                    <h2 class="text-xl font-semibold text-cyan-400 mb-4">Invoice Section Title</h2>
+                    <label for="titleInput" class="block text-sm font-medium text-gray-100 mb-2">
+                        Enter Title Text (Left-Aligned):
+                    </label>
+                    <input type="text" id="titleInput" class="w-full p-3 border border-gray-600 rounded-lg focus:ring-cyan-500 focus:border-cyan-500 shadow-inner text-gray-50 bg-[#1E2734] placeholder-gray-500" placeholder="e.g., Additional Cost Bifercation" value="">
+                </div>
+
+                <!-- Data Input Card & Buttons -->
+                <div class="bg-[#2A3445] p-6 rounded-xl shadow-xl neon-shadow border border-gray-700">
+                    <h2 class="text-xl font-semibold text-cyan-400 mb-4">Source Data (Paste Here)</h2>
+                    <label for="excelData" class="block text-sm font-medium text-gray-100 mb-2">
+                        Paste Spreadsheet Data (Description, then Value):
+                    </label>
+                    <textarea id="excelData" rows="10" class="w-full p-3 border border-gray-600 rounded-lg focus:ring-cyan-500 focus:border-cyan-500 shadow-inner text-gray-50 bg-[#1E2734] placeholder-gray-500" placeholder="Paste data like this (Excel typically uses tabs):&#10;Invoice Cost&#9;£14.81&#10;Logistic Cost from Supplier&#9;£0.00&#10;------ (Optional Separator)&#10;Subtotal&#9;£15.83&#10;Final Cost to Us (TOTAL)&#9;$21.68"></textarea>
+
+                    <div class="mt-6 flex flex-col sm:flex-row space-y-3 sm:space-y-0 sm:space-x-4">
+                        <!-- Primary Button (Bright Cyan) -->
+                        <button id="generateButton" class="w-full sm:w-1/2 px-8 py-3 border border-transparent text-base font-medium rounded-full shadow-lg text-gray-900 bg-cyan-500 hover:bg-cyan-600 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-cyan-500 focus:ring-offset-[#2A3445] transition duration-150 ease-in-out transform hover:scale-[1.03] active:scale-[0.98]">
+                            Generate Content
+                        </button>
+                        <!-- Secondary Button (Cyan Border/Text) -->
+                        <button id="openInWindowButton" disabled class="w-full sm:w-1/2 px-8 py-3 border border-cyan-500 text-base font-medium rounded-full shadow-lg text-cyan-400 bg-[#2A3445] hover:bg-[#3A455A] disabled:opacity-50 disabled:cursor-not-allowed transition duration-150 ease-in-out transform hover:scale-[1.03] active:scale-[0.98]">
+                            Open in New Window
+                        </button>
+                    </div>
+                </div>
+                
+                <!-- Instruction Card (Moved here for better flow on small screens) -->
+                <div class="lg:hidden bg-[#2A3445] p-4 rounded-xl shadow-xl border border-cyan-500">
+                    <h2 class="text-lg font-semibold text-cyan-400 mb-2">Note:</h2>
+                    <p class="text-gray-300 text-sm">Remember to use a <strong class="text-red-400">Fixed-Width Font</strong> (like Courier New) when pasting the final output.</p>
+                </div>
+
+            </div>
+
+            <!-- COLUMN 2: OUTPUT PREVIEW (4/7 width on desktop) -->
+            <div class="lg:col-span-4 space-y-6">
+                
+                <!-- Instruction Card (Desktop view) -->
+                <div class="hidden lg:block bg-[#2A3445] p-4 rounded-xl shadow-xl border border-cyan-500">
+                    <h2 class="text-lg font-semibold text-cyan-400 mb-2">Note:</h2>
+                    <p class="text-gray-300 text-sm">Remember to use a <strong class="text-red-400">Fixed-Width Font</strong> (like Courier New) when pasting the final output.</p>
+                </div>
+
+                <!-- Output Area Card -->
+                <div class="bg-[#2A3445] p-6 rounded-xl shadow-xl neon-shadow border border-gray-700">
+                    <h2 class="text-xl font-semibold text-gray-100 mb-3">Generated Content Output (Fixed-Width Preview)</h2>
+                    <!-- Output Container uses custom CSS for dark background and fixed font -->
+                    <div id="outputContainer" class="mt-4">
+                        <p class="text-gray-400 text-sm" style="font-family: 'Consolas', 'Courier New', monospace;">Your formatted text will appear here. Click "Open in New Window" for best copy-paste results.</p>
+                    </div>
+                </div>
+
+            </div>
+        </div>
+        
+        <footer class="text-center text-sm text-gray-400 mt-12">
+            <p>Tool Developed to Edit texts for Invoice Edit Process</p>
+            <p>Current Version v3.0 24102025</p>
+        </footer>
+    </div>
+
+</body>
+</html>
